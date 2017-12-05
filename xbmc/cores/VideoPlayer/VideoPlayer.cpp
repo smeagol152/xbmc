@@ -667,7 +667,8 @@ CVideoPlayer::CVideoPlayer(IPlayerCallback& callback)
   m_processInfo.reset(CProcessInfo::CreateInstance());
   CreatePlayers();
 
-  m_displayLost = false;
+  m_displayState = AV_DISPLAY_PRESENT;
+  m_displayResetDelay = 0;
   g_Windowing.Register(this);
 }
 
@@ -1369,13 +1370,28 @@ void CVideoPlayer::Process()
     }
 #endif
 
-    // check display lost
-    if (m_displayLost)
+    // check display state (lost, reset, present)
+    if (m_displayState == AV_DISPLAY_LOST)
     {
       Sleep(50);
       continue;
     }
-
+    else if (m_displayState == AV_DISPLAY_RESET)
+    {
+      if (m_displayResetTimer.GetElapsedMilliseconds() > m_displayResetDelay)
+      {
+        m_displayState = AV_DISPLAY_PRESENT;
+        m_VideoPlayerAudio->SendMessage(new CDVDMsgBool(CDVDMsg::GENERAL_PAUSE, false), 1);
+        m_VideoPlayerVideo->SendMessage(new CDVDMsgBool(CDVDMsg::GENERAL_PAUSE, false), 1);
+        m_clock.Pause(false);
+      }
+      else
+      {
+        Sleep(50);
+        continue;
+      }
+    }
+    
     // check if in a cut or commercial break that should be automatically skipped
     CheckAutoSceneSkip();
 
@@ -5224,14 +5240,15 @@ void CVideoPlayer::OnLostDisplay()
   m_VideoPlayerAudio->SendMessage(new CDVDMsgBool(CDVDMsg::GENERAL_PAUSE, true), 1);
   m_VideoPlayerVideo->SendMessage(new CDVDMsgBool(CDVDMsg::GENERAL_PAUSE, true), 1);
   m_clock.Pause(true);
-  m_displayLost = true;
+  m_displayState = AV_DISPLAY_LOST;
 }
 
 void CVideoPlayer::OnResetDisplay()
 {
   CLog::Log(LOGNOTICE, "VideoPlayer: OnResetDisplay received");
-  m_VideoPlayerAudio->SendMessage(new CDVDMsgBool(CDVDMsg::GENERAL_PAUSE, false), 1);
-  m_VideoPlayerVideo->SendMessage(new CDVDMsgBool(CDVDMsg::GENERAL_PAUSE, false), 1);
-  m_clock.Pause(false);
-  m_displayLost = false;
+  m_displayResetDelay = 100 * CSettings::GetInstance().GetInt(CSettings::SETTING_VIDEOPLAYER_PAUSEAFTERREFRESHCHANGE);
+  if (CSettings::GetInstance().GetInt(CSettings::SETTING_VIDEOPLAYER_ADJUSTREFRESHRATE) == ADJUST_REFRESHRATE_OFF)
+    m_displayResetDelay = 0;
+  m_displayResetTimer.StartZero();
+  m_displayState = AV_DISPLAY_RESET;
 }
